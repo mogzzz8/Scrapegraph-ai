@@ -1,0 +1,5 @@
+beautifulsoup4>=4.12
+playwright>=1.40
+notion-client>=2.2
+langchain-anthropic>=0.1
+scrapegraphai>=1.0

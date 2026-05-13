@@ -1,0 +1,36 @@
+name: Job Scraper — Weekly Run
+
+on:
+  schedule:
+    # Every Monday at 8:00 AM IST (2:30 AM UTC)
+    - cron: '30 2 * * 1'
+  workflow_dispatch:
+    # Also allows manual trigger from the GitHub Actions UI anytime
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install beautifulsoup4 playwright notion-client
+
+      - name: Install Chromium for Playwright
+        run: playwright install chromium --with-deps
+
+      - name: Run job scraper (Tier 1 + Tier 2)
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          cd job_scraper
+          python scraper.py --boards --vc-boards

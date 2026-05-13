@@ -1,0 +1,22 @@
+name: Setup Notion Database (run once)
+
+on:
+  workflow_dispatch:   # Manual trigger only — run this once from the Actions tab
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install notion-client
+
+      - name: Create Notion database columns
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python job_scraper/setup_notion.py
