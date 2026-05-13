@@ -1,7 +1,12 @@
 name: Setup Notion Database (run once)
 
 on:
-  workflow_dispatch:   # Manual trigger only — run this once from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - 'job_scraper/setup_notion.py'
+      - '.github/workflows/setup-notion.yml'
+  workflow_dispatch:
 
 jobs:
   setup:

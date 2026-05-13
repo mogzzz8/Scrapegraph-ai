@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from scrapers.job_boards import scrape_all_boards
 from scrapers.vc_pages import scrape_vc_portfolios
-from notion_push import push_job, load_existing_jobs
+from notion_push import push_job, load_existing_jobs, resolve_database_id
 
 
 def _job_key(job) -> str:
@@ -57,8 +57,11 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
 
     notion = Client(auth=config.NOTION_TOKEN)
 
+    print("\nResolving Notion database…")
+    db_id = resolve_database_id(notion, config.NOTION_DATABASE_ID)
+
     print("\nLoading existing Notion entries for deduplication…")
-    seen = load_existing_jobs(notion, config.NOTION_DATABASE_ID)
+    seen = load_existing_jobs(notion, db_id)
     print(f"  {len(seen)} existing entries loaded.")
 
     added, skipped, excluded = 0, 0, 0
@@ -112,7 +115,7 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
             seen.add(key)
             added += 1
         else:
-            ok = push_job(notion, config.NOTION_DATABASE_ID, job)
+            ok = push_job(notion, db_id, job)
             if ok:
                 seen.add(key)
                 added += 1
