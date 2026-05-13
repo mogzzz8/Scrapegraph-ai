@@ -8,52 +8,31 @@ Three-tier scraping:
   Tier 2 — VC centralized job boards (Peak XV, Accel, Lightspeed, Blume,
             Nexus, Antler) — same Playwright + BS4, scrapes ALL portfolio roles
   Tier 3 — VCs without central boards (Kalaari, Stellaris, Z47) —
-            ScrapeGraph AI two-step (portfolio page → individual company /careers)
+            ScrapeGraph AI two-step (requires ANTHROPIC_API_KEY)
 
-Results are deduped and pushed to the Job Search 2026 Notion database.
+Deduplication is done via Notion — no local state file needed.
+Results are pushed to the Job Search 2026 Notion database.
 
 Run:
-    python scraper.py              # full run (all three tiers)
+    python scraper.py              # full run (Tier 1 + 2)
     python scraper.py --boards     # Tier 1 only
     python scraper.py --vc-boards  # Tier 2 only (VC centralized boards)
-    python scraper.py --vc-pages   # Tier 3 only (ScrapeGraph AI, requires API key)
+    python scraper.py --vc-pages   # Tier 3 only (requires ANTHROPIC_API_KEY)
     python scraper.py --dry-run    # print matches, don't push to Notion
 """
 
 import argparse
-import json
 import os
 import sys
 from datetime import date
 from notion_client import Client
 
-# Add parent dir so we can import scrapegraphai when running from this folder
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from scrapers.job_boards import scrape_all_boards
 from scrapers.vc_pages import scrape_vc_portfolios
-from notion_push import push_job
-
-# Tier 2 VC boards use the same Playwright scraper as Tier 1 job boards —
-# they're already aggregated, so we just point it at different URLs.
-# Source label is overridden to "VC site" in notion_push.py mapping.
-
-SEEN_FILE = os.path.join(os.path.dirname(__file__), "seen_jobs.json")
-
-
-# ── Deduplication ─────────────────────────────────────────────────────────────
-
-def _load_seen() -> set:
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    return set()
-
-
-def _save_seen(seen: set):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(sorted(seen), f, indent=2)
+from notion_push import push_job, load_existing_jobs
 
 
 def _job_key(job) -> str:
@@ -63,8 +42,6 @@ def _job_key(job) -> str:
     return f"{company}::{title}"
 
 
-# ── Filtering ─────────────────────────────────────────────────────────────────
-
 def _is_excluded(job) -> bool:
     j = job.__dict__ if hasattr(job, "__dict__") else dict(job)
     text = " ".join([
@@ -73,15 +50,17 @@ def _is_excluded(job) -> bool:
     return any(kw in text for kw in config.EXCLUDE_KEYWORDS)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
     print("=" * 55)
     print(f"  Job Scraper  |  {date.today()}")
     print("=" * 55)
 
     notion = Client(auth=config.NOTION_TOKEN)
-    seen = _load_seen()
+
+    print("\nLoading existing Notion entries for deduplication…")
+    seen = load_existing_jobs(notion, config.NOTION_DATABASE_ID)
+    print(f"  {len(seen)} existing entries loaded.")
+
     added, skipped, excluded = 0, 0, 0
     all_jobs = []
 
@@ -95,7 +74,6 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
     if do_vc_boards:
         print("\n[Tier 2] VC centralized job boards")
         vc_board_jobs = scrape_all_boards(config.VC_JOB_BOARDS)
-        # Tag source as "VC site"
         for job in vc_board_jobs:
             job.source = "VC site"
         all_jobs.extend(vc_board_jobs)
@@ -110,8 +88,8 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
         )
         all_jobs.extend(vc_jobs)
 
-    # ── 3. Filter + push ──────────────────────────────────────────────────────
-    print(f"\n{'[DRY RUN] ' if dry_run else ''}Pushing to Notion…")
+    # ── Filter + push ─────────────────────────────────────────────────────────
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}Processing {len(all_jobs)} listings…")
     for job in all_jobs:
         key = _job_key(job)
 
@@ -121,16 +99,16 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
 
         if _is_excluded(job):
             j = job.__dict__ if hasattr(job, "__dict__") else dict(job)
-            print(f"  Excluded (keyword match): {j.get('company')} — {j.get('title')}")
+            print(f"  Excluded: {j.get('company')} — {j.get('title')}")
             excluded += 1
             seen.add(key)
             continue
 
         j = job.__dict__ if hasattr(job, "__dict__") else dict(job)
-        label = f"  {j.get('company') or '?':30s} | {j.get('title') or '?'}"
+        label = f"{j.get('company') or '?':30s} | {j.get('title') or '?'}"
 
         if dry_run:
-            print(f"  [DRY RUN] would add: {label}")
+            print(f"  [would add] {label}")
             seen.add(key)
             added += 1
         else:
@@ -140,25 +118,23 @@ def run(do_boards: bool, do_vc_boards: bool, do_vc_pages: bool, dry_run: bool):
                 added += 1
                 print(f"  Added: {label}")
 
-    _save_seen(seen)
-
     print("\n" + "=" * 55)
-    print(f"  Added: {added}  |  Skipped (duplicate): {skipped}  |  Excluded: {excluded}")
+    print(f"  Added: {added}  |  Duplicates skipped: {skipped}  |  Excluded: {excluded}")
     print("=" * 55)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scrape jobs → Notion")
-    parser.add_argument("--boards",    action="store_true", help="Tier 1: startup job boards only")
-    parser.add_argument("--vc-boards", action="store_true", help="Tier 2: VC centralized job boards only")
-    parser.add_argument("--vc-pages",  action="store_true", help="Tier 3: VC portfolio pages (ScrapeGraph AI, needs API key)")
-    parser.add_argument("--dry-run",   action="store_true", help="Print matches, skip Notion push")
+    parser.add_argument("--boards",    action="store_true", help="Tier 1 only")
+    parser.add_argument("--vc-boards", action="store_true", help="Tier 2 only")
+    parser.add_argument("--vc-pages",  action="store_true", help="Tier 3 only (needs ANTHROPIC_API_KEY)")
+    parser.add_argument("--dry-run",   action="store_true", help="Preview only, no Notion push")
     args = parser.parse_args()
 
     any_flag = args.boards or args.vc_boards or args.vc_pages
     run(
-        do_boards=args.boards    or not any_flag,
+        do_boards=args.boards       or not any_flag,
         do_vc_boards=args.vc_boards or not any_flag,
-        do_vc_pages=args.vc_pages  or not any_flag,
+        do_vc_pages=args.vc_pages,  # Tier 3 is opt-in only
         dry_run=args.dry_run,
     )
