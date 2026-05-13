@@ -1,9 +1,7 @@
 """
-One-time setup: creates all required columns in the Job Search 2026 Notion database.
+One-time setup: creates the Job Search 2026 database (with all columns)
+inside the Notion page, or updates it if it already exists.
 Run once via GitHub Actions (see .github/workflows/setup-notion.yml).
-
-Handles the case where NOTION_DATABASE_ID is actually a page ID (the table
-lives inside the page) — it searches the page's children for the database.
 """
 
 import os
@@ -11,13 +9,14 @@ import sys
 from notion_client import Client
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+PAGE_ID = os.environ["NOTION_DATABASE_ID"]   # may be a page or a database ID
 
 client = Client(auth=NOTION_TOKEN)
 
-properties = {
-    # "Company" (Title) already exists — Notion creates it by default
-    "Role":           {"rich_text": {}},
+# All properties including the Title column (Company)
+ALL_PROPERTIES = {
+    "Company": {"title": {}},
+    "Role":    {"rich_text": {}},
     "Stage": {
         "select": {
             "options": [
@@ -63,53 +62,72 @@ properties = {
     "Why I want it":  {"rich_text": {}},
 }
 
+# Properties for update (exclude Title — can't update title type)
+UPDATE_PROPERTIES = {k: v for k, v in ALL_PROPERTIES.items() if k != "Company"}
 
-def find_database_id(given_id: str) -> str:
-    """
-    Try the given ID as a database first. If Notion says it's a page,
-    search that page's child blocks for the first database and return its ID.
-    """
-    # Try as database directly
-    try:
-        db = client.databases.retrieve(database_id=given_id)
-        title = db.get("title", [{}])
-        name = title[0].get("plain_text", "(untitled)") if title else "(untitled)"
-        print(f"Found database directly: '{name}' ({given_id})")
-        return given_id
-    except Exception as e:
-        err = str(e)
-        if "not a database" not in err.lower() and "validation" not in err.lower():
-            print(f"ERROR: {e}")
-            sys.exit(1)
 
-    # The ID is a page — look for a database inside it
-    print(f"ID is a page, searching its children for a database…")
+def find_existing_database(page_id: str):
+    """Return the database ID if a child_database exists inside page_id, else None."""
     try:
-        children = client.blocks.children.list(block_id=given_id)
+        children = client.blocks.children.list(block_id=page_id)
         for block in children.get("results", []):
             if block.get("type") == "child_database":
-                db_id = block["id"]
-                db_title = block.get("child_database", {}).get("title", "(untitled)")
-                print(f"Found database inside page: '{db_title}' ({db_id})")
-                return db_id
-        print("ERROR: No database found inside the page. Make sure you added a Table to your Job Search 2026 page.")
-        sys.exit(1)
+                return block["id"]
+    except Exception:
+        pass
+    return None
+
+
+def try_as_database(given_id: str):
+    """Return given_id if it's already a valid database, else None."""
+    try:
+        client.databases.retrieve(database_id=given_id)
+        return given_id
+    except Exception:
+        return None
+
+
+print(f"Looking up Notion page / database…")
+
+# 1. Check if the given ID is already a database
+real_db_id = try_as_database(PAGE_ID)
+
+# 2. Check if there's a database inside the page
+if not real_db_id:
+    real_db_id = find_existing_database(PAGE_ID)
+    if real_db_id:
+        print(f"Found existing database inside page: {real_db_id}")
+
+# 3. No database found — create one inside the page
+if not real_db_id:
+    print("No database found — creating Job Search 2026 database inside the page…")
+    try:
+        new_db = client.databases.create(
+            parent={"type": "page_id", "page_id": PAGE_ID},
+            title=[{"type": "text", "text": {"content": "Job Search 2026"}}],
+            properties=ALL_PROPERTIES,
+        )
+        real_db_id = new_db["id"]
+        print(f"Database created successfully!")
+        print(f"\n>>> UPDATE YOUR SECRET <<<")
+        print(f"Go to GitHub → Settings → Secrets → Actions")
+        print(f"Update NOTION_DATABASE_ID to: {real_db_id}")
+        sys.exit(0)
     except Exception as e:
-        print(f"ERROR reading page children: {e}")
+        print(f"ERROR creating database: {e}")
         sys.exit(1)
 
-
-print(f"Looking up Notion database (given ID: {NOTION_DATABASE_ID})…")
-real_db_id = find_database_id(NOTION_DATABASE_ID)
-
-print("Creating columns…")
+# 4. Database exists — update its columns
+print(f"Updating columns on existing database: {real_db_id}")
 try:
     client.databases.update(
         database_id=real_db_id,
-        properties=properties,
+        properties=UPDATE_PROPERTIES,
     )
-    print(f"Done. All 13 columns created successfully.")
-    print(f"\nIMPORTANT: Update your NOTION_DATABASE_ID secret to: {real_db_id}")
+    print("Done. All 13 columns created successfully.")
+    print(f"\n>>> UPDATE YOUR SECRET <<<")
+    print(f"Go to GitHub → Settings → Secrets → Actions")
+    print(f"Update NOTION_DATABASE_ID to: {real_db_id}")
 except Exception as e:
-    print(f"ERROR creating columns: {e}")
+    print(f"ERROR updating columns: {e}")
     sys.exit(1)
