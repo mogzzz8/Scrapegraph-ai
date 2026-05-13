@@ -87,7 +87,7 @@ def try_as_database(given_id: str):
         return None
 
 
-print(f"Looking up Notion page / database…")
+print("Looking up Notion page / database...")
 
 # 1. Check if the given ID is already a database
 real_db_id = try_as_database(PAGE_ID)
@@ -100,7 +100,7 @@ if not real_db_id:
 
 # 3. No database found — create one inside the page
 if not real_db_id:
-    print("No database found — creating Job Search 2026 database inside the page…")
+    print("No database found — creating Job Search 2026 database inside the page...")
     try:
         new_db = client.databases.create(
             parent={"type": "page_id", "page_id": PAGE_ID},
@@ -108,10 +108,8 @@ if not real_db_id:
             properties=ALL_PROPERTIES,
         )
         real_db_id = new_db["id"]
-        print(f"Database created successfully!")
-        print(f"\n>>> UPDATE YOUR SECRET <<<")
-        print(f"Go to GitHub → Settings → Secrets → Actions")
-        print(f"Update NOTION_DATABASE_ID to: {real_db_id}")
+        print("Database created successfully!")
+        print(f"Real database ID: {real_db_id}")
         sys.exit(0)
     except Exception as e:
         print(f"ERROR creating database: {e}")
@@ -125,9 +123,7 @@ try:
         properties=UPDATE_PROPERTIES,
     )
     print("Done. All 13 columns created successfully.")
-    print(f"\n>>> UPDATE YOUR SECRET <<<")
-    print(f"Go to GitHub → Settings → Secrets → Actions")
-    print(f"Update NOTION_DATABASE_ID to: {real_db_id}")
+    print(f"Real database ID: {real_db_id}")
 except Exception as e:
     print(f"ERROR updating columns: {e}")
     sys.exit(1)
